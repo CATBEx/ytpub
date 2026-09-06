@@ -1,0 +1,16 @@
+# Environment / secrets
+.env
+!.env.example
+
+# Python
+venv/
+__pycache__/
+*.pyc
+
+# Generated data (movies, audio, subtitles, transcripts, clips, outputs)
+data/
+
+# Misc project-specific
+voice_samples_hindi/
+Claude outputs/
+nul

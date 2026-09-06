@@ -1,0 +1,417 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Movie Review Pipeline</title>
+<style>
+  :root {
+    --bg: #0f1115; --panel: #171a21; --border: #2a2e38; --text: #e6e8ec;
+    --muted: #9aa1ac; --accent: #5b8cff; --good: #3ecf8e; --bad: #ef5a5a; --warn: #e6b325;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font-family: -apple-system, Segoe UI, Roboto, sans-serif; }
+  header { padding: 20px 28px; border-bottom: 1px solid var(--border); }
+  header h1 { margin: 0; font-size: 18px; font-weight: 600; }
+  header p { margin: 4px 0 0; color: var(--muted); font-size: 13px; }
+  main { max-width: 960px; margin: 0 auto; padding: 24px 28px 60px; }
+  .panel { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 20px; margin-bottom: 20px; }
+  .panel h2 { margin: 0 0 12px; font-size: 14px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
+  .row { display: flex; gap: 12px; align-items: center; }
+  .mode-row { display: flex; gap: 18px; align-items: center; margin-bottom: 12px; font-size: 13px; }
+  .mode-row label { display: flex; align-items: center; gap: 6px; cursor: pointer; }
+  .mode-hint { color: var(--muted); font-size: 12px; margin: 6px 0 0; }
+  input[type=file] { color: var(--text); font-size: 13px; }
+  button { background: var(--accent); color: white; border: none; border-radius: 6px; padding: 9px 16px; font-size: 13px; cursor: pointer; }
+  button:disabled { opacity: .5; cursor: not-allowed; }
+  button.secondary { background: transparent; border: 1px solid var(--border); color: var(--text); }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { text-align: left; padding: 8px 6px; border-bottom: 1px solid var(--border); }
+  th { color: var(--muted); font-weight: 500; font-size: 11px; text-transform: uppercase; }
+  .mode-tag { font-size: 11px; padding: 2px 7px; border-radius: 20px; background: #2a2e38; color: var(--muted); }
+  .mode-tag.explainer { background: rgba(91,140,255,.15); color: var(--accent); }
+  .status { display: inline-flex; align-items: center; gap: 6px; padding: 2px 8px; border-radius: 20px; font-size: 12px; }
+  .status.queued { background: #2a2e38; color: var(--muted); }
+  .status.running { background: rgba(91,140,255,.15); color: var(--accent); }
+  .status.completed { background: rgba(62,207,142,.15); color: var(--good); }
+  .status.failed { background: rgba(239,90,90,.15); color: var(--bad); }
+  .job-detail { display: none; margin-top: 10px; padding-top: 10px; border-top: 1px dashed var(--border); }
+  .job-detail.open { display: block; }
+  .logs { background: #0b0d11; border-radius: 6px; padding: 10px; font-family: ui-monospace, monospace; font-size: 12px; color: var(--muted); max-height: 160px; overflow-y: auto; white-space: pre-wrap; }
+  .duration-row { display: flex; align-items: center; gap: 10px; margin-top: 12px; }
+  .duration-row input[type=range] { flex: 1; }
+  video { width: 100%; border-radius: 8px; margin-top: 10px; display: block; }
+  a.download-link { color: var(--accent); font-size: 13px; text-decoration: none; }
+  .empty { color: var(--muted); font-size: 13px; padding: 20px 0; text-align: center; }
+  .row-link { color: var(--accent); cursor: pointer; text-decoration: underline; }
+  .lang-block { margin-top: 16px; }
+  .lang-label { font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; margin-bottom: 4px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Movie Review Pipeline</h1>
+  <p>Submit a movie, watch it process, tune the cut. Paid stages are billed to GCP credit — everything else is free/local.</p>
+</header>
+<main>
+  <div class="panel">
+    <h2>Submit a movie</h2>
+    <div class="mode-row">
+      <label><input type="radio" name="mode" value="highlight" checked> Highlight-reel (Director cut)</label>
+      <label><input type="radio" name="mode" value="explainer"> Explainer (narrated recap)</label>
+    </div>
+    <div class="row" id="langRow" style="display:none; margin-bottom:12px;">
+      <label style="font-size:13px; color:var(--muted); display:flex; align-items:center; gap:8px;">
+        Output language (narration)
+        <select id="langSelect"></select>
+      </label>
+    </div>
+    <div class="row">
+      <input type="file" id="fileInput" accept=".mp4,.mov,.mkv">
+      <button id="submitBtn">Start pipeline</button>
+    </div>
+    <p id="modeHint" class="mode-hint">5-6 min hype cut, best moments out of order, hard cuts + captions.</p>
+    <div class="row" id="srtRow" style="display:none; margin-top:8px;">
+      <input type="file" id="srtInput" accept=".srt">
+      <span id="srtHint" style="color: var(--muted); font-size: 12px;">optional — subtitle file (plain or SDH, same .srt format either way). Skips Whisper transcription when provided.</span>
+    </div>
+    <p id="submitMsg" style="color: var(--muted); font-size: 13px; margin: 10px 0 0;"></p>
+  </div>
+
+  <div class="panel">
+    <h2>Jobs</h2>
+    <table id="jobsTable">
+      <thead>
+        <tr><th>File</th><th>Mode</th><th>Status</th><th>Stage</th><th>Started</th><th></th></tr>
+      </thead>
+      <tbody id="jobsBody"></tbody>
+    </table>
+    <div id="emptyState" class="empty">No jobs yet — submit a movie above.</div>
+  </div>
+</main>
+
+<script>
+const API = "/api/v1/pipeline";
+const LANG_LABELS = { en: "English", bn: "Bengali", hi: "Hindi" };
+// Mirrors config/settings.py's EXPLAINER_SUBTITLE_REQUIRED — English can fall back to Whisper,
+// Hindi/Bengali cannot (Whisper transcribes whatever's SPOKEN in the audio, not the requested
+// output language), so a subtitle is mandatory for those. Keep in sync if settings.py changes.
+const SUBTITLE_REQUIRED = { en: false, hi: true, bn: true };
+let selectedJobId = null;
+let pollTimer = null;
+
+// Subtitle generation/translation lives entirely on its own page now (/dashboard/subtitle,
+// "Subtitle Library") — this page doesn't detect, generate, or translate anything itself.
+// The only subtitle-related thing here is the plain required/optional hint on the manual
+// .srt attach field below, plus a same-as-before check at submit time.
+
+function populateLangSelect(selectEl) {
+  for (const [code, label] of Object.entries(LANG_LABELS)) {
+    const opt = document.createElement("option");
+    opt.value = code;
+    opt.textContent = label;
+    selectEl.appendChild(opt);
+  }
+}
+const langSelect = document.getElementById("langSelect");
+populateLangSelect(langSelect);
+
+const MODE_HINTS = {
+  highlight: "5-6 min hype cut, best moments out of order, hard cuts + captions.",
+  explainer: "Produces a channel intro (Intro.mp4/intro-voice.mp3) plus per-beat Clip-N.mp4 (video-only) + voice-N.mp3 pairs, in story order — no merged final video, you assemble it yourself. Pick an output language above; Hindi/Bengali need a matching subtitle — attach one below, or generate one ahead of time on the Subtitle Library page.",
+};
+
+function updateSubtitleHint() {
+  const mode = document.querySelector('input[name="mode"]:checked').value;
+  const lang = langSelect.value;
+  const srtRow = document.getElementById("srtRow");
+  const srtHint = document.getElementById("srtHint");
+  srtRow.style.display = mode === "explainer" ? "flex" : "none";
+  if (mode === "explainer" && SUBTITLE_REQUIRED[lang]) {
+    srtHint.textContent = `required for ${LANG_LABELS[lang]} — a real subtitle (plain or SDH, same .srt format either way). Whisper cannot substitute for a translated transcript.`;
+  } else {
+    srtHint.textContent = "optional — subtitle file (plain or SDH, same .srt format either way). Skips Whisper transcription when provided.";
+  }
+}
+
+function currentMode() {
+  return document.querySelector('input[name="mode"]:checked').value;
+}
+
+for (const radio of document.querySelectorAll('input[name="mode"]')) {
+  radio.onchange = () => {
+    document.getElementById("modeHint").textContent = MODE_HINTS[radio.value] || "";
+    document.getElementById("langRow").style.display = radio.value === "explainer" ? "flex" : "none";
+    updateSubtitleHint();
+  };
+}
+langSelect.onchange = updateSubtitleHint;
+
+async function subtitleExists(filename, language) {
+  const res = await fetch(`${API}/subtitle-exists?filename=${encodeURIComponent(filename)}&language=${language}`);
+  const data = await res.json();
+  return data.exists;
+}
+
+document.getElementById("submitBtn").onclick = async () => {
+  const fileInput = document.getElementById("fileInput");
+  const srtInput = document.getElementById("srtInput");
+  const msg = document.getElementById("submitMsg");
+  if (!fileInput.files.length) { msg.textContent = "Choose a file first."; return; }
+  const mode = document.querySelector('input[name="mode"]:checked').value;
+  const language = langSelect.value;
+  if (mode === "explainer" && SUBTITLE_REQUIRED[language] && !srtInput.files.length) {
+    // No file attached to THIS submit — but one may already be sitting on disk (e.g. generated
+    // ahead of time on the Subtitle Library page), so check before blocking.
+    let alreadyExists = false;
+    try {
+      alreadyExists = await subtitleExists(fileInput.files[0].name, language);
+    } catch (e) { /* fall through to the block below */ }
+    if (!alreadyExists) {
+      msg.textContent = `A ${LANG_LABELS[language]} subtitle (.srt) is required for this language — ` +
+        `attach one below, or generate one on the Subtitle Library page.`;
+      return;
+    }
+  }
+  const form = new FormData();
+  form.append("file", fileInput.files[0]);
+  form.append("mode", mode);
+  if (mode === "explainer") {
+    form.append("language", language);
+  }
+  if (mode === "explainer" && srtInput.files.length) {
+    form.append("srt_file", srtInput.files[0]);
+  }
+  msg.textContent = "Uploading...";
+  try {
+    const res = await fetch(`${API}/submit`, { method: "POST", body: form });
+    if (!res.ok) throw new Error(await res.text());
+    const data = await res.json();
+    msg.textContent = data.srt_file
+      ? `Started ${data.mode} job ${data.job_id} for ${data.filename} (with ${data.srt_file})`
+      : `Started ${data.mode} job ${data.job_id} for ${data.filename}`;
+    fileInput.value = "";
+    srtInput.value = "";
+    refreshJobs();
+  } catch (e) {
+    msg.textContent = "Failed to start: " + e.message;
+  }
+};
+
+function statusBadge(status) {
+  return `<span class="status ${status}">${status}</span>`;
+}
+
+function modeBadge(mode) {
+  const label = mode === "explainer" ? "Explainer" : "Highlight-reel";
+  const cls = mode === "explainer" ? "mode-tag explainer" : "mode-tag";
+  return `<span class="${cls}">${label}</span>`;
+}
+
+async function refreshJobs() {
+  const res = await fetch(`${API}/jobs`);
+  const jobs = await res.json();
+  const body = document.getElementById("jobsBody");
+  const empty = document.getElementById("emptyState");
+  empty.style.display = jobs.length ? "none" : "block";
+  body.innerHTML = "";
+  for (const job of jobs) {
+    const tr = document.createElement("tr");
+    const started = new Date(job.created_at * 1000).toLocaleTimeString();
+    tr.innerHTML = `
+      <td>${job.filename}</td>
+      <td>${modeBadge(job.mode)}</td>
+      <td>${statusBadge(job.status)}</td>
+      <td>${job.current_stage || (job.status === "completed" ? "done" : "-")}</td>
+      <td>${started}</td>
+      <td><span class="row-link" onclick="openJob('${job.id}')">details</span></td>
+    `;
+    body.appendChild(tr);
+    if (job.id === selectedJobId) {
+      const detail = renderDetail(job);
+      const detailRow = document.createElement("tr");
+      const td = document.createElement("td");
+      td.colSpan = 6;
+      td.appendChild(detail);
+      detailRow.appendChild(td);
+      body.appendChild(detailRow);
+    }
+  }
+}
+
+function renderDetail(job) {
+  const wrap = document.createElement("div");
+  wrap.className = "job-detail open";
+
+  const logs = document.createElement("div");
+  logs.className = "logs";
+  logs.textContent = (job.logs || []).join("\n");
+  wrap.appendChild(logs);
+
+  if (job.error) {
+    const err = document.createElement("p");
+    err.style.color = "var(--bad)";
+    err.style.fontSize = "13px";
+    err.textContent = "Error: " + job.error;
+    wrap.appendChild(err);
+  }
+
+  if (job.status === "completed") {
+    if (job.mode === "explainer") {
+      wrap.appendChild(renderExplainerOutputs(job));
+    } else {
+      wrap.appendChild(renderHighlightOutput(job));
+    }
+  }
+
+  return wrap;
+}
+
+function renderExplainerOutputs(job) {
+  const box = document.createElement("div");
+  const outputs = job.outputs || {};
+  const introByLang = job.intro || {};
+  const langs = Object.keys(outputs);
+  if (!langs.length) {
+    box.innerHTML = `<p style="color:var(--muted);font-size:13px;">No output yet.</p>`;
+    return box;
+  }
+  for (const lang of langs) {
+    const beats = outputs[lang] || [];
+    const section = document.createElement("div");
+    section.className = "lang-block";
+
+    const label = document.createElement("div");
+    label.className = "lang-label";
+    label.textContent = `${LANG_LABELS[lang] || lang} — ${beats.length} beat${beats.length === 1 ? "" : "s"} (no merged video — download each pair)`;
+    section.appendChild(label);
+
+    // Intro (2026-08-27, new): a separate, un-numbered Intro.mp4/intro-voice.mp3 pair —
+    // shown above the beat table, not as a row inside it, since it isn't part of the
+    // numbered beat sequence (see pipeline/explainer_intro.py for the design).
+    const intro = introByLang[lang];
+    if (intro) {
+      const introBox = document.createElement("div");
+      introBox.className = "intro-block";
+      introBox.style.margin = "8px 0 14px";
+      introBox.style.padding = "10px 12px";
+      introBox.style.border = "1px solid var(--border, #333)";
+      introBox.style.borderRadius = "6px";
+      const introLabel = document.createElement("div");
+      introLabel.style.fontSize = "13px";
+      introLabel.style.color = "var(--muted)";
+      introLabel.style.marginBottom = "6px";
+      introLabel.textContent = "Intro";
+      const introText = document.createElement("div");
+      introText.style.fontSize = "13px";
+      introText.style.marginBottom = "8px";
+      introText.textContent = intro.narration || "";
+      const introLinks = document.createElement("div");
+      const introClipLink = document.createElement("a");
+      introClipLink.className = "download-link";
+      introClipLink.href = `${API}/jobs/${job.id}/intro-file?language=${lang}&kind=clip`;
+      introClipLink.textContent = "Intro.mp4";
+      introClipLink.style.marginRight = "12px";
+      const introVoiceLink = document.createElement("a");
+      introVoiceLink.className = "download-link";
+      introVoiceLink.href = `${API}/jobs/${job.id}/intro-file?language=${lang}&kind=voice`;
+      introVoiceLink.textContent = "intro-voice.mp3";
+      introLinks.append(introClipLink, introVoiceLink);
+      introBox.append(introLabel, introText, introLinks);
+      section.appendChild(introBox);
+    }
+
+    const table = document.createElement("table");
+    table.innerHTML = `<thead><tr><th>#</th><th>Narration</th><th>Clip</th><th>Voice</th></tr></thead>`;
+    const tbody = document.createElement("tbody");
+    for (const beat of beats) {
+      const n = beat.index + 1;
+      const narrationText = beat.narration || "";
+      const preview = narrationText.length > 90 ? narrationText.slice(0, 90) + "…" : narrationText;
+      const tr = document.createElement("tr");
+      const numTd = document.createElement("td");
+      numTd.textContent = n;
+      const textTd = document.createElement("td");
+      textTd.style.maxWidth = "360px";
+      textTd.textContent = preview;
+      const clipTd = document.createElement("td");
+      const clipLink = document.createElement("a");
+      clipLink.className = "download-link";
+      clipLink.href = `${API}/jobs/${job.id}/beat-file?language=${lang}&index=${beat.index}&kind=clip`;
+      clipLink.textContent = `Clip-${n}.mp4`;
+      clipTd.appendChild(clipLink);
+      const voiceTd = document.createElement("td");
+      const voiceLink = document.createElement("a");
+      voiceLink.className = "download-link";
+      voiceLink.href = `${API}/jobs/${job.id}/beat-file?language=${lang}&index=${beat.index}&kind=voice`;
+      voiceLink.textContent = `voice-${n}.mp3`;
+      voiceTd.appendChild(voiceLink);
+      tr.append(numTd, textTd, clipTd, voiceTd);
+      tbody.appendChild(tr);
+    }
+    table.appendChild(tbody);
+    section.appendChild(table);
+
+    box.appendChild(section);
+  }
+  return box;
+}
+
+function renderHighlightOutput(job) {
+  const box = document.createElement("div");
+
+  const video = document.createElement("video");
+  video.controls = true;
+  video.src = `${API}/jobs/${job.id}/download`;
+  box.appendChild(video);
+
+  const dl = document.createElement("a");
+  dl.className = "download-link";
+  dl.href = `${API}/jobs/${job.id}/download`;
+  dl.textContent = "Download rough-cut";
+  dl.style.display = "inline-block";
+  dl.style.marginTop = "8px";
+  box.appendChild(dl);
+
+  const targetMin = (job.target_duration_used / 60).toFixed(1);
+  const durationRow = document.createElement("div");
+  durationRow.className = "duration-row";
+  durationRow.innerHTML = `
+    <label style="font-size:13px;color:var(--muted);white-space:nowrap;">Target length: <span id="durVal">${targetMin}</span> min</label>
+    <input type="range" id="durSlider" min="2" max="12" step="0.5" value="${targetMin}">
+    <button class="secondary" id="reselectBtn">Re-cut</button>
+  `;
+  box.appendChild(durationRow);
+
+  setTimeout(() => {
+    const slider = document.getElementById("durSlider");
+    const val = document.getElementById("durVal");
+    slider.oninput = () => val.textContent = slider.value;
+    document.getElementById("reselectBtn").onclick = async () => {
+      const btn = document.getElementById("reselectBtn");
+      btn.disabled = true;
+      btn.textContent = "Re-cutting...";
+      try {
+        const seconds = Math.round(parseFloat(slider.value) * 60);
+        await fetch(`${API}/jobs/${job.id}/reselect?target_duration_sec=${seconds}`, { method: "POST" });
+        await refreshJobs();
+      } finally {
+        btn.disabled = false;
+        btn.textContent = "Re-cut";
+      }
+    };
+  }, 0);
+
+  return box;
+}
+
+function openJob(jobId) {
+  selectedJobId = selectedJobId === jobId ? null : jobId;
+  refreshJobs();
+}
+window.openJob = openJob;
+
+refreshJobs();
+pollTimer = setInterval(refreshJobs, 3000);
+</script>
+</body>
+</html>

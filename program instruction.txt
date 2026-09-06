@@ -1,0 +1,221 @@
+MOVIE REVIEW VIDEO PIPELINE - FRESH MACHINE SETUP (CMD/PowerShell ONLY)
+========================================================================
+Every step below is a command you type. No installer wizards to click
+through (winget installs everything silently), no Control Panel, no
+Settings app. The one unavoidable exception is Step 4 (Google login
+opens a browser window - that's how Google's login works, not
+something we can avoid).
+
+Open PowerShell AS ADMINISTRATOR for steps 1-3 (Windows Search ->
+type "powershell" -> right-click -> "Run as administrator" - if you
+want this step done a non-GUI way too, see the NOTE at the very
+bottom). Everything after Step 3 can run in a normal, non-admin
+terminal. This guide assumes you stay in PowerShell the whole way
+through (that's what "Run as administrator" opens) - if you'd rather
+use the old Command Prompt (cmd.exe) instead, see the NOTE near
+Step 6, since the venv-activation command is different there.
+
+
+STEP 1 - Install Python
+------------------------
+    winget install -e --id Python.Python.3.11
+
+Wait for it to finish ("Successfully installed").
+
+
+STEP 2 - Install ffmpeg
+-------------------------
+    winget install -e --id Gyan.FFmpeg
+
+
+STEP 3 - Install Google Cloud CLI
+-----------------------------------
+    winget install -e --id Google.CloudSDK
+
+
+STEP 4 - Close this terminal, open a NEW one (not admin needed from
+here on), and verify everything installed correctly
+---------------------------------------------------------------------
+    python --version
+    ffmpeg -version
+    ffprobe -version
+    gcloud --version
+
+Each should print a version number. `ffprobe` is a SEPARATE check from
+`ffmpeg` on purpose - they ship in the same download, but this pipeline
+calls both directly (ffprobe for measuring clip/audio durations), so
+confirm both, not just `ffmpeg`. If any command says "not recognized",
+close the terminal and open a fresh one again (PATH only refreshes in
+NEW terminal windows) and re-check.
+
+Then authenticate (this is the one step with a browser popup - Google
+requires it for login, log in with the account that has access to the
+GCP project "video-production-506709"):
+
+    gcloud auth application-default login
+
+Confirm it worked:
+
+    gcloud auth application-default print-access-token
+
+Should print a long token string, not an error. This ADC login is
+per-machine - it does NOT come across when you copy the project folder
+in Step 5, run it on every new machine.
+
+
+STEP 5 - Copy the project folder to the new machine
+-------------------------------------------------------
+Copy the whole "Video Production" folder here to the new machine.
+Pick whichever transfer method is actually available to you - USB
+drive, OneDrive/Google Drive sync, or a direct network copy. If both
+machines are on the same network and file sharing is on, this single
+command does it (run FROM the new machine, replace OLD-PC-NAME and the
+username with your real ones):
+
+    robocopy "\\OLD-PC-NAME\Users\<old-username>\Claude\Projects\Video Production" "C:\Users\%USERNAME%\Claude\Projects\Video Production" /E /XD data
+
+/E copies all subfolders, /XD data SKIPS the data folder (old movies/
+transcripts/outputs - leave this out of the command if you want those
+copied too, they can be large). Do NOT copy a `venv` folder across if
+one exists in the source - a venv is tied to the exact machine/Python
+install that created it and will not work correctly on a different
+one; Step 6 below builds a fresh one on the new machine instead. Then:
+
+    cd "C:\Users\%USERNAME%\Claude\Projects\Video Production"
+
+
+STEP 6 - Python virtual environment + dependencies
+--------------------------------------------------------
+Run these one at a time from inside the project folder:
+
+    python -m venv venv
+
+Then activate it - THE COMMAND HERE DEPENDS ON WHICH SHELL YOU'RE IN,
+and using the wrong one is the single most common setup failure on a
+new machine (it either silently does nothing, or PowerShell blocks it
+outright with a script-execution error):
+
+  - PowerShell (what Step 1-4 opened):
+        .\venv\Scripts\Activate.ps1
+    The leading ".\" is REQUIRED - PowerShell will not run a script
+    from the current folder without it, unlike cmd.exe. If this
+    instead prints an error containing "cannot be loaded because
+    running scripts is disabled on this system", your machine's
+    PowerShell execution policy is blocking it (common on a fresh
+    Windows install/fresh user account). Fix it for just this user,
+    once, then retry the activate command above:
+        Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy RemoteSigned
+
+  - Command Prompt (cmd.exe), if you're using that instead:
+        venv\Scripts\activate.bat
+
+Either way, "(venv)" should now show at the start of your prompt -
+confirm that before continuing. Then:
+
+    pip install -r requirements.txt
+
+The install takes a few minutes (faster-whisper/opencv are large) -
+let it finish. If `pip` says "not recognized" even with "(venv)"
+showing, use `python -m pip install -r requirements.txt` instead (same
+effect, just invoked through Python directly).
+
+
+STEP 7 - Confirm the GCP project setting (read-only check)
+----------------------------------------------------------------
+    findstr "GCP_PROJECT_ID" config\settings.py
+
+Should print:
+    GCP_PROJECT_ID = os.environ.get("GCP_PROJECT_ID", "video-production-506709")
+
+If the new machine uses the SAME GCP project as your other machine,
+this is already correct (it came across with the folder) - nothing to
+change. If it should use a DIFFERENT project, tell me the project ID
+and I'll give you the exact command to swap it.
+
+
+STEP 8 - (Optional) pre-allow the firewall so no popup interrupts you
+---------------------------------------------------------------------
+Run this once from an ADMIN terminal, from inside the activated venv
+so the path resolves correctly:
+
+    netsh advfirewall firewall add rule name="Movie Review Pipeline" dir=in action=allow program="%CD%\venv\Scripts\python.exe" enable=yes
+
+Skip this and just click "Allow access" if/when Windows Firewall asks
+- it only asks once.
+
+
+STEP 9 - First run
+--------------------
+    python main.py
+
+Wait for "Uvicorn running on http://0.0.0.0:9999", then open the
+dashboard straight from the command line:
+
+    start http://localhost:9999/dashboard
+
+Upload a short test video (English works with no extra setup; Hindi
+needs a matching .hi.srt subtitle file uploaded alongside it - see the
+"required for Hindi" hint under the dashboard's subtitle picker).
+If it gets through transcription and the Gemini/TTS stages with no
+auth error, everything is wired up correctly.
+
+
+STEP 10 - Every time after this (day-to-day use)
+------------------------------------------------------
+    cd "C:\Users\%USERNAME%\Claude\Projects\Video Production"
+    .\venv\Scripts\Activate.ps1        (PowerShell)  -- or --  venv\Scripts\activate.bat   (cmd.exe)
+    python main.py
+    start http://localhost:9999/dashboard
+
+
+TROUBLESHOOTING (all command-line checks)
+--------------------------------------------
+- "python"/"ffmpeg"/"ffprobe"/"gcloud" not recognized after install
+    Close ALL terminal windows and open a brand new one - winget
+    updates PATH in the registry but only new terminals pick it up.
+
+- Confirm winget itself exists (nearly all modern Windows has it):
+    winget --version
+  If that's not recognized, install "App Installer" - the one thing
+  in this whole guide that isn't a raw command, since it's a Microsoft
+  Store package: winget itself needs to exist before it can install
+  anything else. Ask me and I'll walk you through the store link.
+
+- "venv\Scripts\activate : File ... cannot be loaded because running
+  scripts is disabled on this system" (PowerShell only)
+    Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy RemoteSigned
+  then retry:
+    .\venv\Scripts\Activate.ps1
+
+- Typed "venv\Scripts\activate" in PowerShell and nothing happened /
+  "(venv)" never showed up in the prompt
+    PowerShell needs the leading ".\" and the ".ps1" extension:
+    .\venv\Scripts\Activate.ps1  -  a bare "venv\Scripts\activate"
+    (the cmd.exe-style command) does not reliably run in PowerShell.
+
+- Gemini/TTS calls fail with an auth error
+    gcloud auth application-default login
+    (re-run it - ADC credentials don't travel with a folder copy)
+
+- pip install fails / hangs
+    Check you're actually inside the venv (prompt shows "(venv)"):
+        .\venv\Scripts\Activate.ps1        (PowerShell)
+        venv\Scripts\activate.bat          (cmd.exe)
+    Then retry:
+        pip install -r requirements.txt
+
+- GPU / graphics card
+    Nothing to install - this pipeline is CPU-only by design.
+
+- Where movies go
+    Drop the .mp4 (+ matching .srt if you have one - REQUIRED for
+    Hindi/Bengali, optional for English) into data\input\, or upload
+    straight through the dashboard.
+
+
+NOTE on "Run as administrator" in Step 1-3 without touching the mouse:
+you can launch an elevated PowerShell straight from a normal one:
+    Start-Process powershell -Verb RunAs
+This pops a UAC confirmation dialog (Windows requires that click for
+security - there's no way around that one either), then gives you an
+admin prompt to paste the winget commands into.

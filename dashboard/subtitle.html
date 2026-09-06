@@ -1,0 +1,287 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Subtitle Library — Movie Review Pipeline</title>
+<style>
+  :root {
+    --bg: #0f1115; --panel: #171a21; --border: #2a2e38; --text: #e6e8ec;
+    --muted: #9aa1ac; --accent: #5b8cff; --good: #3ecf8e; --bad: #ef5a5a; --warn: #e6b325;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font-family: -apple-system, Segoe UI, Roboto, sans-serif; }
+  header { padding: 20px 28px; border-bottom: 1px solid var(--border); }
+  header h1 { margin: 0; font-size: 18px; font-weight: 600; }
+  header p { margin: 4px 0 0; color: var(--muted); font-size: 13px; }
+  header a { color: var(--accent); text-decoration: none; font-size: 13px; }
+  main { max-width: 860px; margin: 0 auto; padding: 24px 28px 60px; }
+  .panel { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 20px; margin-bottom: 20px; }
+  .panel h2 { margin: 0 0 12px; font-size: 14px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
+  .row { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+  select { background: #0b0d11; color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 7px 10px; font-size: 13px; }
+  input[type=file] { color: var(--text); font-size: 13px; }
+  button { background: var(--accent); color: white; border: none; border-radius: 6px; padding: 9px 16px; font-size: 13px; cursor: pointer; }
+  button:disabled { opacity: .5; cursor: not-allowed; }
+  button.secondary { background: transparent; border: 1px solid var(--border); color: var(--text); }
+  .hint { color: var(--muted); font-size: 12px; margin: 8px 0 0; }
+  .status-text { color: var(--muted); font-size: 13px; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { text-align: left; padding: 8px 6px; border-bottom: 1px solid var(--border); }
+  th { color: var(--muted); font-weight: 500; font-size: 11px; text-transform: uppercase; }
+  .yes { color: var(--good); }
+  .no { color: var(--muted); }
+  .empty { color: var(--muted); font-size: 13px; padding: 16px 0; text-align: center; }
+  .steps { margin-top: 14px; display: none; }
+  .step { display: flex; align-items: center; gap: 8px; font-size: 13px; padding: 5px 0; }
+  .step .dot { width: 8px; height: 8px; border-radius: 50%; flex: none; background: var(--border); }
+  .step.running .dot { background: var(--accent); }
+  .step.done .dot { background: var(--good); }
+  .step.failed .dot { background: var(--bad); }
+  .step .detail { color: var(--muted); font-size: 12px; margin-left: 4px; }
+  .result-msg { margin-top: 10px; font-size: 13px; }
+  .result-msg.good { color: var(--good); }
+  .result-msg.bad { color: var(--bad); }
+</style>
+</head>
+<body>
+<header>
+  <h1>Subtitle Library</h1>
+  <p>Upload a movie once, confirm its language, generate English/Hindi/Bengali subtitles for it — saved to disk for reuse in every future job. <a href="/dashboard">&larr; Back to pipeline dashboard</a></p>
+</header>
+<main>
+  <div class="panel">
+    <h2>Pick a movie</h2>
+    <div class="row">
+      <select id="movieSelect"><option value="">Upload a new movie…</option></select>
+    </div>
+    <div class="row" id="uploadRow" style="margin-top:10px;">
+      <input type="file" id="fileInput" accept=".mp4,.mov,.mkv">
+    </div>
+    <p id="pickStatus" class="hint"></p>
+  </div>
+
+  <div class="panel" id="languagePanel" style="display:none;">
+    <h2>Movie language &amp; generate</h2>
+    <div class="row">
+      <label class="status-text" style="display:flex; align-items:center; gap:8px;">
+        Movie's own spoken language
+        <select id="languageSelect">
+          <option value="">Auto-detect</option>
+          <option value="en">English</option>
+          <option value="hi">Hindi</option>
+          <option value="bn">Bengali</option>
+        </select>
+      </label>
+      <span id="detectStatus" class="status-text"></span>
+    </div>
+    <p class="hint">This generates a subtitle from the movie's own audio in this language, then translates it into the other two — all three are saved permanently next to the movie file.</p>
+    <div class="row" style="margin-top:10px;">
+      <button id="generateBtn">Generate Subtitle</button>
+    </div>
+    <div class="steps" id="steps"></div>
+    <p class="result-msg" id="resultMsg"></p>
+  </div>
+
+  <div class="panel">
+    <h2>Library</h2>
+    <table id="libraryTable">
+      <thead><tr><th>Movie</th><th>English</th><th>Hindi</th><th>Bengali</th></tr></thead>
+      <tbody id="libraryBody"></tbody>
+    </table>
+    <div id="libraryEmpty" class="empty" style="display:none;">No movies uploaded yet.</div>
+  </div>
+</main>
+
+<script>
+const API = "/api/v1/pipeline";
+const LANG_LABELS = { en: "English", hi: "Hindi", bn: "Bengali" };
+const LANGUAGES = ["en", "hi", "bn"];
+
+let selectedFilename = null;
+let jobPollTimer = null;
+
+const movieSelect = document.getElementById("movieSelect");
+const fileInput = document.getElementById("fileInput");
+const uploadRow = document.getElementById("uploadRow");
+const languagePanel = document.getElementById("languagePanel");
+const languageSelect = document.getElementById("languageSelect");
+const detectStatus = document.getElementById("detectStatus");
+const generateBtn = document.getElementById("generateBtn");
+const stepsBox = document.getElementById("steps");
+const resultMsg = document.getElementById("resultMsg");
+
+async function fetchMovies() {
+  const res = await fetch(`${API}/movies`);
+  const data = await res.json();
+  return data.movies || [];
+}
+
+function renderLibrary(movies) {
+  const body = document.getElementById("libraryBody");
+  const empty = document.getElementById("libraryEmpty");
+  body.innerHTML = "";
+  empty.style.display = movies.length ? "none" : "block";
+  for (const m of movies) {
+    const tr = document.createElement("tr");
+    const cells = LANGUAGES.map(l => m.subtitles[l]
+      ? `<td class="yes">&#10003; ${m.subtitles[l]}</td>`
+      : `<td class="no">&mdash;</td>`);
+    tr.innerHTML = `<td>${m.filename}</td>${cells.join("")}`;
+    body.appendChild(tr);
+  }
+}
+
+function populateMovieSelect(movies) {
+  const current = movieSelect.value;
+  movieSelect.innerHTML = '<option value="">Upload a new movie…</option>';
+  for (const m of movies) {
+    const opt = document.createElement("option");
+    opt.value = m.filename;
+    opt.textContent = m.filename;
+    movieSelect.appendChild(opt);
+  }
+  if (current && [...movieSelect.options].some(o => o.value === current)) {
+    movieSelect.value = current;
+  }
+}
+
+async function refreshLibrary() {
+  const movies = await fetchMovies();
+  renderLibrary(movies);
+  populateMovieSelect(movies);
+  return movies;
+}
+
+movieSelect.onchange = () => {
+  if (!movieSelect.value) {
+    uploadRow.style.display = "flex";
+    languagePanel.style.display = "none";
+    selectedFilename = null;
+    return;
+  }
+  uploadRow.style.display = "none";
+  fileInput.value = "";
+  pickMovie(movieSelect.value);
+};
+
+fileInput.onchange = async () => {
+  if (!fileInput.files.length) return;
+  const file = fileInput.files[0];
+  const pickStatus = document.getElementById("pickStatus");
+  pickStatus.textContent = `Uploading ${file.name}...`;
+  const form = new FormData();
+  form.append("file", file);
+  try {
+    const res = await fetch(`${API}/upload-movie`, { method: "POST", body: form });
+    if (!res.ok) throw new Error(await res.text());
+    const data = await res.json();
+    pickStatus.textContent = `Uploaded ${data.filename}.`;
+    await refreshLibrary();
+    movieSelect.value = data.filename;
+    uploadRow.style.display = "none";
+    pickMovie(data.filename);
+  } catch (e) {
+    pickStatus.textContent = "Upload failed: " + e.message;
+  }
+};
+
+function pickMovie(filename) {
+  selectedFilename = filename;
+  languagePanel.style.display = "block";
+  languageSelect.value = "";
+  stepsBox.style.display = "none";
+  stepsBox.innerHTML = "";
+  resultMsg.textContent = "";
+  resultMsg.className = "result-msg";
+  runDetect(filename);
+}
+
+async function runDetect(filename) {
+  detectStatus.textContent = "Detecting...";
+  try {
+    const form = new FormData();
+    form.append("filename", filename);
+    const res = await fetch(`${API}/subtitle/detect`, { method: "POST", body: form });
+    if (!res.ok) throw new Error(await res.text());
+    const data = await res.json();
+    pollJob(data.job_id, (job) => {
+      if (job.status === "completed") {
+        const { language, probability } = job.result;
+        if (LANG_LABELS[language]) {
+          languageSelect.value = language;
+          detectStatus.textContent = `Detected: ${LANG_LABELS[language]} (${Math.round(probability * 100)}%) — override above if wrong`;
+        } else {
+          detectStatus.textContent = `Detected an unsupported language (${language}) — pick one manually above`;
+        }
+      } else if (job.status === "failed") {
+        detectStatus.textContent = "Couldn't auto-detect — pick the language manually above: " + job.error;
+      }
+    }, /*isDetect=*/true);
+  } catch (e) {
+    detectStatus.textContent = "Couldn't auto-detect — pick the language manually above: " + e.message;
+  }
+}
+
+function pollJob(jobId, onSettled, isDetect) {
+  const timerRef = { id: null };
+  timerRef.id = setInterval(async () => {
+    const res = await fetch(`${API}/subtitle-jobs/${jobId}`);
+    const job = await res.json();
+    if (!isDetect) renderSteps(job);
+    if (job.status === "completed" || job.status === "failed") {
+      clearInterval(timerRef.id);
+      onSettled(job);
+    }
+  }, 2000);
+}
+
+function renderSteps(job) {
+  stepsBox.style.display = "block";
+  stepsBox.innerHTML = "";
+  for (const step of (job.steps || [])) {
+    const div = document.createElement("div");
+    div.className = `step ${step.status}`;
+    const icon = step.status === "done" ? "&#10003;" : step.status === "failed" ? "&#10007;" : "&hellip;";
+    div.innerHTML = `<span class="dot"></span><span>${step.label}</span><span>${icon}</span>` +
+      (step.detail ? `<span class="detail">${step.detail}</span>` : "");
+    stepsBox.appendChild(div);
+  }
+}
+
+generateBtn.onclick = async () => {
+  if (!selectedFilename) return;
+  generateBtn.disabled = true;
+  resultMsg.textContent = "";
+  resultMsg.className = "result-msg";
+  stepsBox.style.display = "block";
+  stepsBox.innerHTML = "";
+  try {
+    const form = new FormData();
+    form.append("filename", selectedFilename);
+    if (languageSelect.value) form.append("language", languageSelect.value);
+    const res = await fetch(`${API}/subtitle/generate-all`, { method: "POST", body: form });
+    if (!res.ok) throw new Error(await res.text());
+    const data = await res.json();
+    pollJob(data.job_id, async (job) => {
+      generateBtn.disabled = false;
+      if (job.status === "completed") {
+        const langs = Object.keys(job.result.subtitles).map(l => LANG_LABELS[l] || l).join(", ");
+        resultMsg.textContent = `Done — subtitles saved for: ${langs}. Reusable for every future job on this movie.`;
+        resultMsg.className = "result-msg good";
+      } else {
+        resultMsg.textContent = "Failed: " + job.error;
+        resultMsg.className = "result-msg bad";
+      }
+      await refreshLibrary();
+    }, /*isDetect=*/false);
+  } catch (e) {
+    generateBtn.disabled = false;
+    resultMsg.textContent = "Failed to start: " + e.message;
+    resultMsg.className = "result-msg bad";
+  }
+};
+
+refreshLibrary();
+</script>
+</body>
+</html>

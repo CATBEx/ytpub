@@ -1,0 +1,45 @@
+# --- Free / local (CPU) ---
+faster-whisper==1.0.3
+scenedetect[opencv]==0.6.4
+librosa==0.10.2
+opencv-python==4.10.0.84
+numpy==1.26.4
+soundfile==0.12.1
+
+# --- Paid, used only for Stage 6 scoring + Explainer-mode narration (Vertex/GCP ADC, billed to GCP credit) ---
+# Bumped from 0.3.0 (2026-08-26) — Explainer Stage 3/4 need schema-constrained structured output
+# (response_schema/response_mime_type on GenerateContentConfig, response.parsed on the result),
+# which 0.3.0 predates. Verified against this exact pinned version: GenerateContentConfig has
+# response_mime_type/response_schema fields, GenerateContentResponse has a parsed field, and
+# generate_content(model=, contents=, config=) stays backward-compatible with the older
+# generate_content(model=, contents=) call already used in stage5_score.py — that code needed
+# no changes for this bump.
+google-genai==1.9.0
+google-auth==2.35.0
+google-cloud-texttospeech==2.37.0   # Explainer mode Stage 5 — narration voice. As of 2026-08-27,
+                                     # per-language: English (Fenrir) + Hindi (Achird) are wired;
+                                     # Bengali is deferred until a voice is picked (see
+                                     # config/settings.py's NARRATOR_VOICES).
+
+# pydantic: NOT imported directly anywhere in this codebase as of the 2026-08-26 bug-#6 fix —
+# Stage 3/4's response_schema is a plain dict (SUMMARY_SCHEMA/MATCH_SCHEMA/INTRO_SCHEMA), not a
+# Pydantic BaseModel (the original nested-Pydantic design produced $ref/$defs Gemini's SDK
+# rejected on a real run — see the project doc's Bug log #6). Still pinned here because fastapi
+# and google-genai depend on it transitively, and a reproducible version avoids a surprise
+# transitive bump breaking either of them.
+pydantic==2.13.3
+
+# --- API server + dashboard ---
+fastapi==0.115.0
+uvicorn[standard]==0.30.6
+python-multipart==0.0.9
+
+# --- Misc ---
+tqdm==4.66.5
+python-dotenv==1.0.1
+
+# --- Not pip-installable — must exist on PATH separately ---
+# ffmpeg + ffprobe (same package, e.g. `winget install -e --id Gyan.FFmpeg` on Windows) — every
+# stage that touches video (audio extraction, clip cutting/retiming, duration probing) shells out
+# to these two binaries directly; there is no Python ffmpeg wrapper in this list. `ffmpeg -version`
+# AND `ffprobe -version` should both print a version number before running the pipeline.
