@@ -48,6 +48,20 @@ Run:
 import sys
 from pathlib import Path
 
+# Windows' console defaults to a legacy ANSI codepage (the "charmap" codec),
+# not UTF-8 — any print() of generated non-English text (Hindi/Bengali
+# narration, transcript segments, etc.) crashes with UnicodeEncodeError the
+# moment it hits a non-ASCII character. Reconfigure stdout/stderr to UTF-8
+# up front so no print() anywhere in the pipeline can ever crash a job over
+# this again, regardless of language or which stage does the printing.
+# (uvicorn's reload=True re-executes this module fresh in each worker
+# subprocess, so this applies there too, not just in the parent process.)
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 SERVER_PORT = 9999
