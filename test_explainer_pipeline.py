@@ -815,23 +815,30 @@ def test_audio_events_unit():
 
 # ---------------------------------------------------------------------------
 # Multi-language redesign (2026-08-27): NARRATOR_VOICES lookup + clear-error
-# behavior for a language with no voice configured yet (Bengali, deferred by
-# explicit user choice). Must raise BEFORE touching the network or reading
-# matched.json — no real matched.json fixture needed for this check.
+# behavior for a language with no voice configured. Bengali now HAS a real
+# voice (bn-IN-Chirp3-HD-Algenib, chosen 2026-09-09 via
+# test_voice_bengali_chirp3hd.py), so the missing-voice-raises-clearly path
+# is covered here by temporarily unsetting it via monkeypatch, rather than
+# by relying on any real language staying unconfigured forever. Must raise
+# BEFORE touching the network or reading matched.json — no real matched.json
+# fixture needed for this check.
 # ---------------------------------------------------------------------------
 def test_multilang_voice_unit():
     print("\n[test] === Multi-language unit: NARRATOR_VOICES lookup / missing-voice error ===")
 
-    assert settings.NARRATOR_VOICES.get("bn") is None, (
-        "this test assumes Bengali has no voice configured yet -- if that's changed, "
-        "update this test's expectations"
+    assert settings.NARRATOR_VOICES.get("bn") == "bn-IN-Chirp3-HD-Algenib", (
+        "Bengali's configured voice changed -- update this test's expectation if intentional"
     )
+    original_bn_voice = settings.NARRATOR_VOICES["bn"]
+    settings.NARRATOR_VOICES["bn"] = None
     try:
         stage5.synthesize_narration("nonexistent_stem", Path("nonexistent.mp4"),
                                      Path("nonexistent.wav"), "bn")
         raise AssertionError("expected RuntimeError for a language with no configured voice")
     except RuntimeError as e:
         assert "bn" in str(e) or "Bengali" in str(e), f"error should name the language: {e}"
+    finally:
+        settings.NARRATOR_VOICES["bn"] = original_bn_voice
     print("[test]   synthesize_narration: language with NARRATOR_VOICES[lang]=None raises a "
           "clear error before any file I/O or network call OK")
 

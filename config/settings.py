@@ -292,16 +292,16 @@ INTRO_TARGET_WORDS = 25          # ~150 wpm average narration pace -> roughly IN
 # CHANGED 2026-08-27 (multi-language redesign): NARRATOR_VOICE (singular) is now
 # NARRATOR_VOICES, a per-language dict — the whole point being that changing a voice in the
 # future is a one-line edit here, not a code change. "en" is the already-in-production pick
-# (Fenrir, chosen via A/B test, see above). "hi" was chosen the same way, by the user running
-# test_voice_hindi_chirp3hd.py and listening to every real hi-IN Chirp3-HD voice on the
-# project. "bn" is intentionally None — Bengali voice selection was explicitly deferred by
-# the user ("skip for now, pick it later"); explainer_stage5_tts.py must raise a clear error
+# (Fenrir, chosen via A/B test, see above). "hi" and "bn" were chosen the same way, by the
+# user running test_voice_hindi_chirp3hd.py / test_voice_bengali_chirp3hd.py and listening to
+# every real Chirp3-HD voice on the project for that locale; explainer_stage5_tts.py must
+# still raise a clear error
 # if a bn job is submitted before this is set, not silently fall back to some other language's
 # voice or a wrong-locale name.
 NARRATOR_VOICES = {
     "en": "en-US-Chirp3-HD-Fenrir",
     "hi": "hi-IN-Chirp3-HD-Achird",
-    "bn": None,   # not chosen yet — see comment above
+    "bn": "bn-IN-Chirp3-HD-Algenib",
 }
 TTS_MAX_RETRIES = 4
 TTS_RETRY_BACKOFF_BASE = 5
