@@ -46,6 +46,7 @@ Run:
         next to the video.
 """
 import sys
+import multiprocessing
 from pathlib import Path
 
 # Windows' console defaults to a legacy ANSI codepage (the "charmap" codec),
@@ -61,6 +62,22 @@ for _stream in (sys.stdout, sys.stderr):
         _stream.reconfigure(encoding="utf-8", errors="replace")
     except Exception:
         pass
+
+# On some Windows/venv combinations, multiprocessing's "spawn" start method
+# (which uvicorn's reload=True relies on to launch its real worker process)
+# silently resolves to a DIFFERENT Python interpreter than the one actually
+# running this process — e.g. the machine's global Python install instead of
+# this project's own venv. When that global install doesn't have every
+# package this project needs, a job can crash deep into a run (e.g.
+# `ImportError: cannot import name 'texttospeech' from 'google.cloud'` at the
+# TTS stage) even though earlier stages using packages the global install
+# happens to also have (Gemini, faster-whisper) worked fine — a confusing,
+# stage-dependent failure that looks unrelated to environment setup. Pin the
+# executable explicitly so every spawned worker always uses the SAME
+# interpreter as whatever started this process (the venv's, if that's how
+# it was launched) — no divergence possible regardless of the underlying
+# cause. Must be set before uvicorn (or anything else) spawns a subprocess.
+multiprocessing.set_executable(sys.executable)
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
